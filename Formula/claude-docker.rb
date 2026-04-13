@@ -1,6 +1,6 @@
 class ClaudeDocker < Formula
   desc "Run Claude Code autonomously in Docker with git worktree isolation"
-  homepage "https://github.com/hansvd/claude-docker"
+  homepage "https://github.com/hansvd/homebrew-claude-docker"
   url "https://github.com/hansvd/claude-docker/archive/refs/tags/v1.0.0.tar.gz"
   sha256 "TODO"
   license "MIT"

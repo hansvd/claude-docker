@@ -7,7 +7,7 @@ Each task runs in its own git worktree and Docker container, with guard hooks th
 ## Install
 
 ```bash
-brew tap hansvd/tap
+brew tap hansvd/claude-docker
 brew install claude-docker
 ```
 
