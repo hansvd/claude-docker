@@ -1,0 +1,364 @@
+#!/bin/bash
+set -euo pipefail
+
+VERSION="1.0.0"
+IMAGE_REGISTRY="ghcr.io/hansvd"
+
+# ---------------------------------------------------------------------------
+# claude-docker — Run Claude Code autonomously in Docker with worktree isolation
+# ---------------------------------------------------------------------------
+
+usage() {
+    cat <<EOF
+claude-docker $VERSION — Run Claude Code in Docker with git worktree isolation
+
+USAGE:
+  claude-docker run <task-name> ["prompt"]
+  claude-docker cleanup <task-name> [--delete-branch]
+  claude-docker list
+  claude-docker login
+  claude-docker help
+  claude-docker --version
+
+RUN OPTIONS:
+  -d, --dir <subdir>           Start Claude in a subdirectory of the worktree
+  --from <branch>              Base branch for the worktree
+  --image <stack>              Image stack: java | node | python
+  --branch-prefix <prefix>    Branch prefix (default: ai-tasks/)
+  --prompt-file <path>         Read prompt from file
+  --config <path>              Config file path (default: .claude-docker.yml)
+  --no-hooks                   Disable all guard hooks
+  --dry-run                    Show what would happen without executing
+
+EXAMPLES:
+  claude-docker run fix-login "Fix the login timeout"
+  claude-docker run -d sensus-app fix-ui "Fix dashboard layout"
+  claude-docker run --from feature/auth fix-auth
+  claude-docker cleanup fix-login
+  claude-docker list
+EOF
+    exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Config file parsing
+# ---------------------------------------------------------------------------
+
+REPO_ROOT=""
+CONFIG_FILE=""
+
+find_repo_root() {
+    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+        echo "Error: not inside a git repository."
+        exit 1
+    }
+}
+
+# Read a value from the config file using yq. Falls back to a default.
+# Usage: config_get <key> <default>
+config_get() {
+    local key="$1"
+    local default="$2"
+    if [ -f "$CONFIG_FILE" ]; then
+        local val
+        if command -v yq &>/dev/null; then
+            val=$(yq -r "$key // \"\"" "$CONFIG_FILE" 2>/dev/null)
+        else
+            # Fallback: simple grep for top-level keys (flat YAML only)
+            local simple_key="${key##.}"
+            val=$(grep -E "^${simple_key}:" "$CONFIG_FILE" 2>/dev/null | head -1 | sed 's/^[^:]*: *//' | tr -d '"'"'" || true)
+        fi
+        if [ -n "$val" ] && [ "$val" != "null" ]; then
+            echo "$val"
+            return
+        fi
+    fi
+    echo "$default"
+}
+
+# Read a YAML list as comma-separated values
+# Usage: config_get_list <key> <default-csv>
+config_get_list() {
+    local key="$1"
+    local default="$2"
+    if [ -f "$CONFIG_FILE" ] && command -v yq &>/dev/null; then
+        local val
+        val=$(yq -r "($key // []) | join(\",\")" "$CONFIG_FILE" 2>/dev/null)
+        if [ -n "$val" ] && [ "$val" != "null" ]; then
+            echo "$val"
+            return
+        fi
+    fi
+    echo "$default"
+}
+
+# Read extra env vars as KEY=VALUE lines
+config_get_env() {
+    if [ -f "$CONFIG_FILE" ] && command -v yq &>/dev/null; then
+        yq -r '(.env // {}) | to_entries[] | .key + "=" + .value' "$CONFIG_FILE" 2>/dev/null || true
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+validate_task_name() {
+    local name="$1"
+    if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "Error: Task name must contain only letters, numbers, hyphens, and underscores."
+        exit 1
+    fi
+}
+
+cmd_run() {
+    local subdir=""
+    local base_branch=""
+    local image_stack=""
+    local branch_prefix=""
+    local prompt_file=""
+    local no_hooks=false
+    local dry_run=false
+    local config_path=""
+
+    # Parse run-specific flags
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -d|--dir)       subdir="$2"; shift 2 ;;
+            --from)         base_branch="$2"; shift 2 ;;
+            --image)        image_stack="$2"; shift 2 ;;
+            --branch-prefix) branch_prefix="$2"; shift 2 ;;
+            --prompt-file)  prompt_file="$2"; shift 2 ;;
+            --config)       config_path="$2"; shift 2 ;;
+            --no-hooks)     no_hooks=true; shift ;;
+            --dry-run)      dry_run=true; shift ;;
+            -*)             echo "Unknown option: $1"; exit 1 ;;
+            *)              break ;;
+        esac
+    done
+
+    if [ $# -lt 1 ]; then
+        echo "Error: task name required."
+        echo "Usage: claude-docker run <task-name> [\"prompt\"]"
+        exit 1
+    fi
+
+    local task_name="$1"
+    local prompt="${2:-}"
+    validate_task_name "$task_name"
+
+    # Read prompt from file if specified
+    if [ -n "$prompt_file" ]; then
+        if [ ! -f "$prompt_file" ]; then
+            echo "Error: prompt file not found: $prompt_file"
+            exit 1
+        fi
+        prompt=$(cat "$prompt_file")
+    fi
+
+    # Load config
+    find_repo_root
+    CONFIG_FILE="${config_path:-$REPO_ROOT/.claude-docker.yml}"
+
+    # Resolve settings: CLI flag > config file > default
+    local img="${image_stack:-$(config_get '.image' 'node')}"
+    local base="${base_branch:-$(config_get '.base-branch' 'origin/main')}"
+    local prefix="${branch_prefix:-$(config_get '.branch-prefix' 'ai-tasks/')}"
+
+    # Guard config
+    local protected_files
+    local protected_paths
+    if [ "$no_hooks" = true ]; then
+        protected_files=""
+        protected_paths=""
+    else
+        protected_files=$(config_get_list '.guards.protected-files' '.env,*.pem,*.key')
+        protected_paths=$(config_get_list '.guards.protected-paths' '')
+    fi
+
+    local branch="${prefix}${task_name}"
+    local workspaces_dir="$REPO_ROOT/.claude-workspaces"
+    local worktree_dir="$workspaces_dir/$task_name"
+    local image="${IMAGE_REGISTRY}/claude-docker-${img}:latest"
+
+    if [ "$dry_run" = true ]; then
+        echo "=== Dry Run ==="
+        echo "Repository:       $REPO_ROOT"
+        echo "Config file:      $CONFIG_FILE"
+        echo "Image:            $image"
+        echo "Task name:        $task_name"
+        echo "Branch:           $branch"
+        echo "Base branch:      $base"
+        echo "Worktree:         $worktree_dir"
+        echo "Subdirectory:     ${subdir:-<root>}"
+        echo "Hooks:            $([ "$no_hooks" = true ] && echo 'disabled' || echo 'enabled')"
+        echo "Protected files:  ${protected_files:-<none>}"
+        echo "Protected paths:  ${protected_paths:-<none>}"
+        echo "Prompt:           ${prompt:-<interactive>}"
+        return 0
+    fi
+
+    # Clean stale worktree entries
+    git worktree prune
+
+    # Create worktree if it doesn't exist
+    if [ ! -d "$worktree_dir" ]; then
+        mkdir -p "$workspaces_dir"
+        echo "Creating worktree at $worktree_dir on branch $branch..."
+        git fetch origin
+
+        if git show-ref --verify --quiet "refs/heads/$branch"; then
+            git worktree add "$worktree_dir" "$branch"
+        else
+            git worktree add -b "$branch" "$worktree_dir" "$base"
+        fi
+        echo "Worktree ready."
+    else
+        echo "Using existing worktree at $worktree_dir"
+    fi
+
+    # Validate subdir
+    if [ -n "$subdir" ] && [ ! -d "$worktree_dir/$subdir" ]; then
+        echo "Error: Subdirectory '$subdir' does not exist in the worktree."
+        echo "Available directories:"
+        ls -d "$worktree_dir"/*/ 2>/dev/null | xargs -n1 basename
+        exit 1
+    fi
+
+    # Build the claude command
+    local cmd
+    if [ -n "$prompt" ]; then
+        cmd="claude --dangerously-skip-permissions '$prompt'"
+    else
+        cmd="claude --dangerously-skip-permissions"
+    fi
+
+    # Build docker run arguments
+    local -a docker_args=(
+        run --rm -it
+        -v "$worktree_dir:$worktree_dir"
+        -v "$REPO_ROOT/.git:$REPO_ROOT/.git"
+        -v "${HOME}/.agent-home:/home/agent"
+        -v "${HOME}/.ssh:/home/agent/.ssh:ro"
+        -w "$worktree_dir${subdir:+/$subdir}"
+        -e "ANTHROPIC_API_KEY"
+        -e "CLAUDE_DOCKER=1"
+        -e "HOME=/home/agent"
+        -e "WORKTREE_PATH=$worktree_dir"
+        -e "CLAUDE_DOCKER_BRANCH_PREFIX=$prefix"
+        --user "${UID:-1000}:${GID:-$(id -g)}"
+        --entrypoint "/opt/claude-docker/entrypoint.sh"
+    )
+
+    # Add guard env vars
+    if [ "$no_hooks" = true ]; then
+        docker_args+=(-e "CLAUDE_DOCKER_NO_HOOKS=1")
+    else
+        [ -n "$protected_files" ] && docker_args+=(-e "CLAUDE_DOCKER_PROTECTED_FILES=$protected_files")
+        [ -n "$protected_paths" ] && docker_args+=(-e "CLAUDE_DOCKER_PROTECTED_PATHS=$protected_paths")
+    fi
+
+    # Add extra env vars from config
+    while IFS= read -r envline; do
+        [ -n "$envline" ] && docker_args+=(-e "$envline")
+    done < <(config_get_env)
+
+    docker_args+=("$image" "$cmd")
+
+    echo "Starting container for task '$task_name'${subdir:+ in $subdir}..."
+    docker "${docker_args[@]}"
+}
+
+cmd_cleanup() {
+    local delete_branch=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --delete-branch) delete_branch=true; shift ;;
+            -*)              echo "Unknown option: $1"; exit 1 ;;
+            *)               break ;;
+        esac
+    done
+
+    if [ $# -lt 1 ]; then
+        echo "Error: task name required."
+        echo "Usage: claude-docker cleanup <task-name> [--delete-branch]"
+        exit 1
+    fi
+
+    local task_name="$1"
+    validate_task_name "$task_name"
+
+    find_repo_root
+    CONFIG_FILE="$REPO_ROOT/.claude-docker.yml"
+    local prefix
+    prefix=$(config_get '.branch-prefix' 'ai-tasks/')
+
+    local worktree_dir="$REPO_ROOT/.claude-workspaces/$task_name"
+    local branch="${prefix}${task_name}"
+
+    if [ ! -d "$worktree_dir" ]; then
+        echo "No workspace found for task '$task_name'."
+        exit 1
+    fi
+
+    echo "Removing worktree for task '$task_name'..."
+    git worktree remove "$worktree_dir"
+
+    if [ "$delete_branch" = true ]; then
+        echo "Deleting branch '$branch'..."
+        git branch -d "$branch"
+    else
+        echo "Done. Branch '$branch' still exists — delete it manually if no longer needed:"
+        echo "  git branch -d $branch"
+    fi
+}
+
+cmd_list() {
+    find_repo_root
+    echo "Active worktrees:"
+    git worktree list
+}
+
+cmd_login() {
+    find_repo_root
+    CONFIG_FILE="$REPO_ROOT/.claude-docker.yml"
+    local img
+    img=$(config_get '.image' 'node')
+    local image="${IMAGE_REGISTRY}/claude-docker-${img}:latest"
+
+    echo "Launching Claude login..."
+    docker run --rm -it \
+        -v "${HOME}/.agent-home:/home/agent" \
+        -e "HOME=/home/agent" \
+        --user "${UID:-1000}:${GID:-$(id -g)}" \
+        "$image" \
+        claude login
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+if [ $# -lt 1 ]; then
+    usage
+fi
+
+case "$1" in
+    run)        shift; cmd_run "$@" ;;
+    cleanup)    shift; cmd_cleanup "$@" ;;
+    list)       cmd_list ;;
+    login)      cmd_login ;;
+    help|-h|--help) usage ;;
+    --version)  echo "claude-docker $VERSION"; exit 0 ;;
+    *)
+        # Allow shorthand: treat unrecognized arg as task name for `run`
+        if [[ "$1" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            cmd_run "$@"
+        else
+            echo "Unknown command: $1"
+            echo "Run 'claude-docker help' for usage."
+            exit 1
+        fi
+        ;;
+esac
