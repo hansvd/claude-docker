@@ -1,6 +1,6 @@
 # claude-docker
 
-Run Claude Code autonomously in Docker with git worktree isolation and configurable safety guardrails.
+Run Claude Code autonomously on macOS in Docker with git worktree isolation and configurable safety guardrails.
 
 Each task runs in its own git worktree and Docker container, with guard hooks that restrict branch access and protect sensitive files.
 
