@@ -16,8 +16,9 @@ set -e
 #   CLAUDE_DOCKER_NO_HOOKS           - set to 1 to skip hook generation
 # ---------------------------------------------------------------------------
 
-HOOKS_DIR="/opt/claude-docker/hooks"
+HOOKS_DIR="$HOME/.claude-docker-hooks"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+mkdir -p "$HOOKS_DIR"
 
 # --- Cleanup: restore original settings.json on exit ---
 cleanup() {
@@ -112,7 +113,7 @@ chmod +x "$HOOKS_DIR/branch-guard.sh"
 # Generate file-guard.sh (only if patterns are configured)
 # ---------------------------------------------------------------------------
 HOOKS_JSON='[]'
-HOOKS_JSON=$(echo "$HOOKS_JSON" | jq '. + [{"type":"command","command":"/opt/claude-docker/hooks/branch-guard.sh"}]')
+HOOKS_JSON=$(echo "$HOOKS_JSON" | jq --arg cmd "$HOOKS_DIR/branch-guard.sh" '. + [{"type":"command","command":$cmd}]')
 
 if [ -n "${CLAUDE_DOCKER_PROTECTED_FILES:-}" ] || [ -n "${CLAUDE_DOCKER_PROTECTED_PATHS:-}" ]; then
 
@@ -184,7 +185,7 @@ sed -i "s|__PROTECTED_FILES__|${CLAUDE_DOCKER_PROTECTED_FILES:-}|g" "$HOOKS_DIR/
 sed -i "s|__PROTECTED_PATHS__|${CLAUDE_DOCKER_PROTECTED_PATHS:-}|g" "$HOOKS_DIR/file-guard.sh"
 chmod +x "$HOOKS_DIR/file-guard.sh"
 
-HOOKS_JSON=$(echo "$HOOKS_JSON" | jq '. + [{"type":"command","command":"/opt/claude-docker/hooks/file-guard.sh"}]')
+HOOKS_JSON=$(echo "$HOOKS_JSON" | jq --arg cmd "$HOOKS_DIR/file-guard.sh" '. + [{"type":"command","command":$cmd}]')
 fi
 
 # ---------------------------------------------------------------------------

@@ -36,8 +36,8 @@ RUN claude plugin marketplace add anthropics/claude-plugins-official && \
     claude plugin install context7@claude-plugins-official && \
     claude mcp add playwright npx '@playwright/mcp@latest'
 
-# Install entrypoint and hook generation scripts
+# Install entrypoint script. Hooks are generated at runtime into
+# $HOME/.claude-docker-hooks so they are writable regardless of the UID
+# the container is started with.
 COPY lib/entrypoint.sh /opt/claude-docker/entrypoint.sh
-RUN chmod +x /opt/claude-docker/entrypoint.sh && \
-    mkdir -p /opt/claude-docker/hooks && \
-    chown -R 1000:1000 /opt/claude-docker
+RUN chmod 755 /opt/claude-docker/entrypoint.sh
