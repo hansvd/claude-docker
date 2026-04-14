@@ -4,6 +4,15 @@ set -euo pipefail
 VERSION="1.0.0"
 IMAGE_REGISTRY="ghcr.io/hansvd"
 
+# Per-stack image versions. Bump only when the corresponding image actually
+# changes, then publish via `image-<stack>-v<version>` git tag (handled by
+# .github/workflows/build-images.yml). IMAGE_VERSION_BASE is informational —
+# stack Dockerfiles still FROM :latest of base at build time.
+IMAGE_VERSION_BASE="0.0.3"
+IMAGE_VERSION_JAVA="0.0.3"
+IMAGE_VERSION_NODE="0.0.3"
+IMAGE_VERSION_PYTHON="0.0.3"
+
 # ---------------------------------------------------------------------------
 # claude-docker — Run Claude Code autonomously in Docker with worktree isolation
 # ---------------------------------------------------------------------------
@@ -111,6 +120,18 @@ validate_task_name() {
     fi
 }
 
+# Resolve the Docker image tag for a given stack name (java|node|python).
+# Falls back to "latest" for unknown stacks so misconfiguration doesn't break
+# the CLI — it'll just pull whatever happens to exist on ghcr.io.
+resolve_image_tag() {
+    local stack="$1"
+    local upper
+    upper=$(echo "$stack" | tr '[:lower:]' '[:upper:]')
+    local var="IMAGE_VERSION_${upper}"
+    local tag="${!var:-}"
+    echo "${tag:-latest}"
+}
+
 cmd_run() {
     local subdir=""
     local base_branch=""
@@ -179,7 +200,8 @@ cmd_run() {
     local branch="${prefix}${task_name}"
     local workspaces_dir="$REPO_ROOT/.claude-workspaces"
     local worktree_dir="$workspaces_dir/$task_name"
-    local image="${IMAGE_REGISTRY}/claude-docker-${img}:latest"
+    local image
+    image="${IMAGE_REGISTRY}/claude-docker-${img}:$(resolve_image_tag "$img")"
 
     if [ "$dry_run" = true ]; then
         echo "=== Dry Run ==="
@@ -325,7 +347,8 @@ cmd_login() {
     CONFIG_FILE="$REPO_ROOT/.claude-docker.yml"
     local img
     img=$(config_get '.image' 'node')
-    local image="${IMAGE_REGISTRY}/claude-docker-${img}:latest"
+    local image
+    image="${IMAGE_REGISTRY}/claude-docker-${img}:$(resolve_image_tag "$img")"
 
     echo "Launching Claude login..."
     docker run --rm -it \
