@@ -4,6 +4,8 @@ Run Claude Code autonomously on macOS in Docker with git worktree isolation and 
 
 Each task runs in its own git worktree and Docker container, with guard hooks that restrict branch access and protect sensitive files.
 
+Pre-built multi-arch (amd64 + arm64) images are available for three language stacks — **Node**, **Java** (Temurin JDK 24), and **Python** (with `pip` and `uv`) — all on a shared Ubuntu 24.04 base that includes the Claude CLI, Playwright + Chromium, the official Claude plugins, and the Playwright MCP. Pick one with `image: java | node | python` in `.claude-docker.yml`.
+
 ## Install
 
 ```bash
