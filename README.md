@@ -54,6 +54,9 @@ guards:
   protected-paths:
     - "deployment/kubernetes/configurations"
 
+# Extra flags passed to the `claude` CLI inside the container
+claude-flags: --remote
+
 # Extra environment variables for the container
 env:
   GRADLE_OPTS: "-Xmx2g"
@@ -68,6 +71,7 @@ All fields are optional. Without a config file, sensible defaults apply:
 | `branch-prefix` | `ai-tasks/` |
 | `guards.protected-files` | `.env, *.pem, *.key` |
 | `guards.protected-paths` | _(none)_ |
+| `claude-flags` | _(none)_ |
 
 ## Commands
 
@@ -82,6 +86,7 @@ Creates a git worktree and launches a Docker container with Claude Code.
 | `--image <stack>` | Override image stack |
 | `--branch-prefix <prefix>` | Override branch prefix |
 | `--prompt-file <path>` | Read prompt from a file |
+| `--claude-flags "<flags>"` | Extra flags passed to `claude` (e.g. `"--remote"`) |
 | `--no-hooks` | Disable all guard hooks |
 | `--dry-run` | Show what would happen |
 

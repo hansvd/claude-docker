@@ -36,6 +36,7 @@ RUN OPTIONS:
   --branch-prefix <prefix>    Branch prefix (default: ai-tasks/)
   --prompt-file <path>         Read prompt from file
   --config <path>              Config file path (default: .claude-docker.yml)
+  --claude-flags "<flags>"    Extra flags passed to the claude CLI (e.g. "--remote")
   --no-hooks                   Disable all guard hooks
   --dry-run                    Show what would happen without executing
 
@@ -141,6 +142,8 @@ cmd_run() {
     local no_hooks=false
     local dry_run=false
     local config_path=""
+    local claude_flags=""
+    local claude_flags_set=false
 
     # Parse run-specific flags
     while [[ $# -gt 0 ]]; do
@@ -151,6 +154,7 @@ cmd_run() {
             --branch-prefix) branch_prefix="$2"; shift 2 ;;
             --prompt-file)  prompt_file="$2"; shift 2 ;;
             --config)       config_path="$2"; shift 2 ;;
+            --claude-flags) claude_flags="$2"; claude_flags_set=true; shift 2 ;;
             --no-hooks)     no_hooks=true; shift ;;
             --dry-run)      dry_run=true; shift ;;
             -*)             echo "Unknown option: $1"; exit 1 ;;
@@ -181,10 +185,17 @@ cmd_run() {
     find_repo_root
     CONFIG_FILE="${config_path:-$REPO_ROOT/.claude-docker.yml}"
 
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Note: no config file at $CONFIG_FILE — using built-in defaults." >&2
+    fi
+
     # Resolve settings: CLI flag > config file > default
     local img="${image_stack:-$(config_get '.image' 'node')}"
     local base="${base_branch:-$(config_get '.base-branch' 'origin/main')}"
     local prefix="${branch_prefix:-$(config_get '.branch-prefix' 'ai-tasks/')}"
+    if [ "$claude_flags_set" = false ]; then
+        claude_flags=$(config_get '.claude-flags' '')
+    fi
 
     # Guard config
     local protected_files
@@ -216,6 +227,7 @@ cmd_run() {
         echo "Hooks:            $([ "$no_hooks" = true ] && echo 'disabled' || echo 'enabled')"
         echo "Protected files:  ${protected_files:-<none>}"
         echo "Protected paths:  ${protected_paths:-<none>}"
+        echo "Claude flags:     ${claude_flags:-<none>}"
         echo "Prompt:           ${prompt:-<interactive>}"
         return 0
     fi
@@ -226,7 +238,7 @@ cmd_run() {
     # Create worktree if it doesn't exist
     if [ ! -d "$worktree_dir" ]; then
         mkdir -p "$workspaces_dir"
-        echo "Creating worktree at $worktree_dir on branch $branch..."
+        echo "Creating worktree at $worktree_dir on branch $branch (base: $base)..."
         git fetch origin
 
         if git show-ref --verify --quiet "refs/heads/$branch"; then
@@ -249,10 +261,12 @@ cmd_run() {
 
     # Build the claude command
     local cmd
+    local extra_flags=""
+    [ -n "$claude_flags" ] && extra_flags=" $claude_flags"
     if [ -n "$prompt" ]; then
-        cmd="claude --dangerously-skip-permissions '$prompt'"
+        cmd="claude --dangerously-skip-permissions${extra_flags} '$prompt'"
     else
-        cmd="claude --dangerously-skip-permissions"
+        cmd="claude --dangerously-skip-permissions${extra_flags}"
     fi
 
     # Build docker run arguments
@@ -375,11 +389,15 @@ case "$1" in
     help|-h|--help) usage ;;
     --version)  echo "claude-docker $VERSION"; exit 0 ;;
     *)
-        # Allow shorthand: treat unrecognized arg as task name for `run`
-        if [[ "$1" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        # Allow shorthand: treat unrecognized arg as task name for `run`.
+        # Task names must start with an alphanumeric/underscore so bare flags
+        # like `--dry-run` are not silently accepted as task names.
+        if [[ "$1" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_-]*$ ]]; then
             cmd_run "$@"
         else
-            echo "Unknown command: $1"
+            echo "Unknown command or misplaced flag: $1"
+            echo "Flags like --dry-run must come after 'run'. Example:"
+            echo "  claude-docker run --dry-run <task>"
             echo "Run 'claude-docker help' for usage."
             exit 1
         fi
