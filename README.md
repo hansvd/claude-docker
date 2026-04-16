@@ -54,8 +54,9 @@ guards:
   protected-paths:
     - "deployment/kubernetes/configurations"
 
-# Extra flags passed to the `claude` CLI inside the container
-claude-flags: --remote
+# Extra flags passed to the `claude` CLI inside the container.
+# `$task_name` (or `${task_name}`) is interpolated with the current task name.
+claude-flags: "--remote-control $task_name"
 
 # Extra environment variables for the container
 env:
@@ -79,16 +80,16 @@ All fields are optional. Without a config file, sensible defaults apply:
 
 Creates a git worktree and launches a Docker container with Claude Code.
 
-| Option | Description |
-|--------|-------------|
-| `-d, --dir <subdir>` | Start Claude in a subdirectory |
-| `--from <branch>` | Base branch for the worktree |
-| `--image <stack>` | Override image stack |
-| `--branch-prefix <prefix>` | Override branch prefix |
-| `--prompt-file <path>` | Read prompt from a file |
-| `--claude-flags "<flags>"` | Extra flags passed to `claude` (e.g. `"--remote"`) |
-| `--no-hooks` | Disable all guard hooks |
-| `--dry-run` | Show what would happen |
+| Option | Description                                                                                                           |
+|--------|-----------------------------------------------------------------------------------------------------------------------|
+| `-d, --dir <subdir>` | Start Claude in a subdirectory                                                                                        |
+| `--from <branch>` | Base branch for the worktree                                                                                          |
+| `--image <stack>` | Override image stack                                                                                                  |
+| `--branch-prefix <prefix>` | Override branch prefix                                                                                                |
+| `--prompt-file <path>` | Read prompt from a file                                                                                               |
+| `--claude-flags "<flags>"` | Extra flags passed to `claude`. `$task_name` / `${task_name}` are interpolated (e.g. `"--remote-control $task_name"`) |
+| `--no-hooks` | Disable all guard hooks                                                                                               |
+| `--dry-run` | Show what would happen                                                                                                |
 
 ### `claude-docker cleanup <task-name>`
 

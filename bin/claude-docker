@@ -36,7 +36,9 @@ RUN OPTIONS:
   --branch-prefix <prefix>    Branch prefix (default: ai-tasks/)
   --prompt-file <path>         Read prompt from file
   --config <path>              Config file path (default: .claude-docker.yml)
-  --claude-flags "<flags>"    Extra flags passed to the claude CLI (e.g. "--remote")
+  --claude-flags "<flags>"    Extra flags passed to the claude CLI.
+                              Supports \$task_name interpolation
+                              (e.g. "--remote-control=\$task_name").
   --no-hooks                   Disable all guard hooks
   --dry-run                    Show what would happen without executing
 
@@ -196,6 +198,10 @@ cmd_run() {
     if [ "$claude_flags_set" = false ]; then
         claude_flags=$(config_get '.claude-flags' '')
     fi
+
+    # Interpolate template variables into claude-flags. Supported: $task_name, ${task_name}
+    claude_flags="${claude_flags//\$\{task_name\}/$task_name}"
+    claude_flags="${claude_flags//\$task_name/$task_name}"
 
     # Guard config
     local protected_files
