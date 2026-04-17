@@ -46,6 +46,10 @@ base-branch: origin/master
 # Branch prefix for task branches
 branch-prefix: ai-tasks/
 
+# Where to put task worktrees. Supports $REPO_ROOT and ~ expansion.
+# Default: $REPO_ROOT/.claude-workspaces
+workspaces-dir: ~/claude-workspaces/$REPO_ROOT
+
 # Guard hooks — protect sensitive files and directories
 guards:
   protected-files:
@@ -74,6 +78,7 @@ All fields are optional. Without a config file, sensible defaults apply:
 | `image` | `node` |
 | `base-branch` | `origin/main` |
 | `branch-prefix` | `ai-tasks/` |
+| `workspaces-dir` | `$REPO_ROOT/.claude-workspaces` |
 | `guards.protected-files` | `.env, *.pem, *.key` |
 | `guards.protected-paths` | _(none)_ |
 | `claude-flags` | _(none)_ |
@@ -91,6 +96,7 @@ Creates a git worktree and launches a Docker container with Claude Code.
 | `--from <branch>` | Base branch for the worktree                                                                                          |
 | `--image <stack>` | Override image stack                                                                                                  |
 | `--branch-prefix <prefix>` | Override branch prefix                                                                                                |
+| `--workspaces-dir <path>` | Directory for worktrees (default `$REPO_ROOT/.claude-workspaces`). Supports `$REPO_ROOT` and `~` expansion             |
 | `--prompt-file <path>` | Read prompt from a file                                                                                               |
 | `--claude-flags "<flags>"` | Extra flags passed to `claude`. `$task_name` / `${task_name}` are interpolated (e.g. `"--remote-control $task_name"`) |
 | `--no-hooks` | Disable all guard hooks                                                                                               |
@@ -134,4 +140,4 @@ Disable with `--no-hooks` for unrestricted access.
 
 - `~/.agent-home` — Claude CLI config, plugins, and settings (shared across tasks)
 - `~/.ssh` — SSH keys mounted read-only for git operations
-- `.claude-workspaces/` — Git worktrees (add to `.gitignore`)
+- `.claude-workspaces/` — Git worktrees (add to `.gitignore`, or relocate via `workspaces-dir` / `--workspaces-dir`)
