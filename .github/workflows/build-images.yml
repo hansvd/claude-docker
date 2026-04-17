@@ -1,77 +1,95 @@
-name: Build and Push Docker Images
+name: Build and Release
 
-# Image releases are decoupled from CLI releases. Each image has its own tag
-# scheme:
-#   image-base-v<ver>    → publishes ghcr.io/hansvd/claude-docker-base:<ver>
-#   image-java-v<ver>    → publishes ghcr.io/hansvd/claude-docker-java:<ver>
-#   image-node-v<ver>    → publishes ghcr.io/hansvd/claude-docker-node:<ver>
-#   image-python-v<ver>  → publishes ghcr.io/hansvd/claude-docker-python:<ver>
+# Triggered on push to main whenever bin/claude-docker's IMAGE_VERSION changes.
+# One push rebuilds all four images (base + java/node/python), creates the
+# v<version> git tag, and cuts a GitHub Release.
 #
-# CLI releases (tag pattern `v*`) do NOT trigger this workflow — bump the
-# IMAGE_VERSION_<STACK> constant in bin/claude-docker to ship a new image to
-# users.
+# workflow_dispatch is an escape hatch for rebuilding at a given version
+# without bumping (e.g. to recover from a transient build failure).
 
 on:
   push:
-    tags:
-      - 'image-base-v*'
-      - 'image-java-v*'
-      - 'image-node-v*'
-      - 'image-python-v*'
+    branches: [main]
+    paths: ['bin/claude-docker']
   workflow_dispatch:
     inputs:
-      stack:
-        description: 'Stack to build (base|java|node|python)'
-        required: true
-        type: choice
-        options: [base, java, node, python]
       version:
-        description: 'Version tag (e.g. 0.0.3)'
+        description: 'Version to build (e.g. 0.0.7). Must match IMAGE_VERSION in bin/claude-docker.'
         required: true
         type: string
+      create_release:
+        description: 'Also create the v<version> tag + GitHub Release'
+        required: true
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/hansvd/claude-docker
 
 jobs:
+  detect-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      should_build: ${{ steps.ver.outputs.should_build }}
+      should_release: ${{ steps.ver.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Extract version and decide whether to build
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ver='${{ inputs.version }}'
+            echo "version=${ver}" >> "$GITHUB_OUTPUT"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "should_release=${{ inputs.create_release }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          new=$(grep -E '^IMAGE_VERSION=' bin/claude-docker | head -1 | sed 's/.*="\(.*\)".*/\1/')
+          old=$(git show HEAD~1:bin/claude-docker 2>/dev/null | grep -E '^IMAGE_VERSION=' | head -1 | sed 's/.*="\(.*\)".*/\1/' || true)
+          if [ -z "$new" ]; then
+            echo "::error::Could not extract IMAGE_VERSION from bin/claude-docker"
+            exit 1
+          fi
+          echo "version=${new}" >> "$GITHUB_OUTPUT"
+          if [ "$new" = "$old" ]; then
+            echo "IMAGE_VERSION unchanged (${new}) — no build needed."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "IMAGE_VERSION changed: ${old:-<none>} -> ${new}"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build-base:
-    if: >-
-      ${{ startsWith(github.ref, 'refs/tags/image-base-v') ||
-          (github.event_name == 'workflow_dispatch' && inputs.stack == 'base') }}
+    needs: detect-version
+    if: needs.detect-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Extract version
-        id: ver
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${GITHUB_REF_NAME#image-base-v}" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: docker/metadata-action@v5
         id: meta
         with:
           images: ${{ env.IMAGE_PREFIX }}-base
           tags: |
-            type=raw,value=${{ steps.ver.outputs.version }}
+            type=raw,value=${{ needs.detect-version.outputs.version }}
             type=raw,value=latest
-
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -81,59 +99,56 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  build-stack:
-    if: >-
-      ${{ startsWith(github.ref, 'refs/tags/image-java-v') ||
-          startsWith(github.ref, 'refs/tags/image-node-v') ||
-          startsWith(github.ref, 'refs/tags/image-python-v') ||
-          (github.event_name == 'workflow_dispatch' && inputs.stack != 'base') }}
+  build-stacks:
+    needs: [detect-version, build-base]
+    if: needs.detect-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [java, node, python]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Extract stack and version
-        id: parse
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "stack=${{ inputs.stack }}" >> "$GITHUB_OUTPUT"
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            # image-java-v0.0.3  →  stack=java, version=0.0.3
-            ref="${GITHUB_REF_NAME}"
-            stack="${ref#image-}"
-            stack="${stack%%-v*}"
-            version="${ref#image-${stack}-v}"
-            echo "stack=${stack}" >> "$GITHUB_OUTPUT"
-            echo "version=${version}" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ env.IMAGE_PREFIX }}-${{ steps.parse.outputs.stack }}
+          images: ${{ env.IMAGE_PREFIX }}-${{ matrix.stack }}
           tags: |
-            type=raw,value=${{ steps.parse.outputs.version }}
+            type=raw,value=${{ needs.detect-version.outputs.version }}
             type=raw,value=latest
-
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: images/${{ steps.parse.outputs.stack }}/Dockerfile
+          file: images/${{ matrix.stack }}/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            BASE_TAG=latest
+            BASE_TAG=${{ needs.detect-version.outputs.version }}
+
+  release:
+    needs: [detect-version, build-base, build-stacks]
+    if: needs.detect-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create tag and GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.detect-version.outputs.version }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -23,9 +23,11 @@ docker build -t claude-docker-node:test --build-arg BASE_TAG=test images/node
 
 There is **no test or lint suite**. Verify behavior via `--dry-run` for the CLI and by running containers end-to-end. Verify entrypoint hook logic by inspecting the generated `settings.json` inside a running container.
 
-Two independent release tracks:
-- **CLI releases** (`v*` tags, e.g. `v0.0.4`) → `.github/workflows/release.yml` cuts a GitHub Release. The CLI references pinned image tags via `IMAGE_VERSION_{BASE,JAVA,NODE,PYTHON}` constants at the top of `bin/claude-docker`.
-- **Image releases** (`image-<stack>-v*` tags, e.g. `image-java-v0.0.4`) → `build-images.yml` builds only that stack and pushes `ghcr.io/hansvd/claude-docker-<stack>:<ver>` (multi-arch amd64+arm64). Ritual: edit image → tag `image-java-v0.0.4` → workflow publishes → bump `IMAGE_VERSION_JAVA` in CLI → commit → cut `v*` CLI release so users pull the new image on next `brew upgrade`.
+Unified release: CLI and images share a single version.
+- Bump `IMAGE_VERSION` at the top of `bin/claude-docker` and push to `main`.
+- `.github/workflows/build-images.yml` detects the change, builds all four images (base first, then java/node/python in parallel, all pinned to `BASE_TAG=<version>`, multi-arch amd64+arm64), then creates the `v<version>` git tag and GitHub Release.
+- `workflow_dispatch` is an escape hatch for re-running a build at an existing version without bumping.
+- The Homebrew tap (`hansvd/homebrew-claude-docker`) is still updated by hand after each release — copy `Formula/claude-docker.rb`, bump `url` and `sha256`.
 
 ## Architecture
 

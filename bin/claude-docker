@@ -4,14 +4,11 @@ set -euo pipefail
 VERSION="1.0.0"
 IMAGE_REGISTRY="ghcr.io/hansvd"
 
-# Per-stack image versions. Bump only when the corresponding image actually
-# changes, then publish via `image-<stack>-v<version>` git tag (handled by
-# .github/workflows/build-images.yml). IMAGE_VERSION_BASE is informational —
-# stack Dockerfiles still FROM :latest of base at build time.
-IMAGE_VERSION_BASE="0.0.3"
-IMAGE_VERSION_JAVA="0.0.3"
-IMAGE_VERSION_NODE="0.0.3"
-IMAGE_VERSION_PYTHON="0.0.3"
+# Version for all claude-docker images. Bumping this and pushing to main
+# triggers the image-build workflow (.github/workflows/build-images.yml),
+# which rebuilds all four images, cuts the v<version> git tag, and creates
+# a GitHub Release. Keep in lockstep with the CLI release tag.
+IMAGE_VERSION="0.0.7"
 
 # ---------------------------------------------------------------------------
 # claude-docker — Run Claude Code autonomously in Docker with worktree isolation
@@ -147,18 +144,6 @@ validate_task_name() {
     fi
 }
 
-# Resolve the Docker image tag for a given stack name (java|node|python).
-# Falls back to "latest" for unknown stacks so misconfiguration doesn't break
-# the CLI — it'll just pull whatever happens to exist on ghcr.io.
-resolve_image_tag() {
-    local stack="$1"
-    local upper
-    upper=$(echo "$stack" | tr '[:lower:]' '[:upper:]')
-    local var="IMAGE_VERSION_${upper}"
-    local tag="${!var:-}"
-    echo "${tag:-latest}"
-}
-
 cmd_run() {
     local subdir=""
     local base_branch=""
@@ -251,7 +236,7 @@ cmd_run() {
     local workspaces_dir="$REPO_ROOT/.claude-workspaces"
     local worktree_dir="$workspaces_dir/$task_name"
     local image
-    image="${IMAGE_REGISTRY}/claude-docker-${img}:$(resolve_image_tag "$img")"
+    image="${IMAGE_REGISTRY}/claude-docker-${img}:${IMAGE_VERSION}"
 
     if [ "$dry_run" = true ]; then
         echo "=== Dry Run ==="
@@ -407,7 +392,7 @@ cmd_login() {
     local img
     img=$(config_get '.image' 'node')
     local image
-    image="${IMAGE_REGISTRY}/claude-docker-${img}:$(resolve_image_tag "$img")"
+    image="${IMAGE_REGISTRY}/claude-docker-${img}:${IMAGE_VERSION}"
 
     echo "Launching Claude login..."
     docker run --rm -it \
