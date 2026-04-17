@@ -40,6 +40,7 @@ RUN OPTIONS:
                               Supports \$task_name interpolation
                               (e.g. "--remote-control=\$task_name").
   --no-hooks                   Disable all guard hooks
+  --no-update                  Skip updating Claude before start
   --dry-run                    Show what would happen without executing
 
 EXAMPLES:
@@ -81,6 +82,29 @@ config_get() {
             val=$(grep -E "^${simple_key}:" "$CONFIG_FILE" 2>/dev/null | head -1 | sed 's/^[^:]*: *//' | tr -d '"'"'" || true)
         fi
         if [ -n "$val" ] && [ "$val" != "null" ]; then
+            echo "$val"
+            return
+        fi
+    fi
+    echo "$default"
+}
+
+# Read a boolean value from the config file. Accepts only "true" or "false";
+# anything else (missing, null, non-boolean) falls back to the default. Needed
+# because `yq`'s // operator treats the boolean `false` the same as null, which
+# would otherwise make `false` unreachable through config_get.
+config_get_bool() {
+    local key="$1"
+    local default="$2"
+    if [ -f "$CONFIG_FILE" ]; then
+        local val
+        if command -v yq &>/dev/null; then
+            val=$(yq -r "$key | tostring" "$CONFIG_FILE" 2>/dev/null)
+        else
+            local simple_key="${key##.}"
+            val=$(grep -E "^${simple_key}:" "$CONFIG_FILE" 2>/dev/null | head -1 | sed 's/^[^:]*: *//' | tr -d '"'"'" || true)
+        fi
+        if [ "$val" = "true" ] || [ "$val" = "false" ]; then
             echo "$val"
             return
         fi
@@ -142,6 +166,7 @@ cmd_run() {
     local branch_prefix=""
     local prompt_file=""
     local no_hooks=false
+    local no_update=false
     local dry_run=false
     local config_path=""
     local claude_flags=""
@@ -158,6 +183,7 @@ cmd_run() {
             --config)       config_path="$2"; shift 2 ;;
             --claude-flags) claude_flags="$2"; claude_flags_set=true; shift 2 ;;
             --no-hooks)     no_hooks=true; shift ;;
+            --no-update)    no_update=true; shift ;;
             --dry-run)      dry_run=true; shift ;;
             -*)             echo "Unknown option: $1"; exit 1 ;;
             *)              break ;;
@@ -199,6 +225,13 @@ cmd_run() {
         claude_flags=$(config_get '.claude-flags' '')
     fi
 
+    local auto_update
+    if [ "$no_update" = true ]; then
+        auto_update="false"
+    else
+        auto_update=$(config_get_bool '.auto-update-claude' 'true')
+    fi
+
     # Interpolate template variables into claude-flags. Supported: $task_name, ${task_name}
     claude_flags="${claude_flags//\$\{task_name\}/$task_name}"
     claude_flags="${claude_flags//\$task_name/$task_name}"
@@ -231,6 +264,7 @@ cmd_run() {
         echo "Worktree:         $worktree_dir"
         echo "Subdirectory:     ${subdir:-<root>}"
         echo "Hooks:            $([ "$no_hooks" = true ] && echo 'disabled' || echo 'enabled')"
+        echo "Auto-update:      $auto_update"
         echo "Protected files:  ${protected_files:-<none>}"
         echo "Protected paths:  ${protected_paths:-<none>}"
         echo "Claude flags:     ${claude_flags:-<none>}"
@@ -298,6 +332,11 @@ cmd_run() {
     else
         [ -n "$protected_files" ] && docker_args+=(-e "CLAUDE_DOCKER_PROTECTED_FILES=$protected_files")
         [ -n "$protected_paths" ] && docker_args+=(-e "CLAUDE_DOCKER_PROTECTED_PATHS=$protected_paths")
+    fi
+
+    # Auto-update is on by default in the entrypoint; only pass the env var to disable it
+    if [ "$auto_update" = "false" ]; then
+        docker_args+=(-e "CLAUDE_DOCKER_AUTO_UPDATE=0")
     fi
 
     # Add extra env vars from config

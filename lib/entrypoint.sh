@@ -14,6 +14,7 @@ set -e
 #   CLAUDE_DOCKER_PROTECTED_FILES    - comma-separated glob patterns to block
 #   CLAUDE_DOCKER_PROTECTED_PATHS    - comma-separated directory prefixes to block
 #   CLAUDE_DOCKER_NO_HOOKS           - set to 1 to skip hook generation
+#   CLAUDE_DOCKER_AUTO_UPDATE        - set to 0 to skip Claude auto-update (default: on)
 # ---------------------------------------------------------------------------
 
 HOOKS_DIR="$HOME/.claude-docker-hooks"
@@ -32,6 +33,16 @@ trap cleanup EXIT
 if [ -n "${WORKTREE_PATH:-}" ]; then
     git config --global --add safe.directory "$WORKTREE_PATH"
 fi
+
+# --- Update Claude to the latest release (unless disabled) ---
+if [ "${CLAUDE_DOCKER_AUTO_UPDATE:-1}" = "1" ]; then
+    if curl -fsSL --max-time 30 https://claude.ai/install.sh | bash >/dev/null 2>&1; then
+        echo "claude-docker: updated Claude in $HOME/.local/bin"
+    else
+        echo "claude-docker: Claude update skipped (network error) — using image binary" >&2
+    fi
+fi
+export PATH="$HOME/.local/bin:$PATH"
 
 # --- Skip hook generation if disabled ---
 if [ "${CLAUDE_DOCKER_NO_HOOKS:-}" = "1" ]; then
