@@ -7,7 +7,7 @@ IMAGE_REGISTRY="ghcr.io/hansvd"
 # triggers the image-build workflow (.github/workflows/build-images.yml),
 # which rebuilds all four images, cuts the v<version> git tag, and creates
 # a GitHub Release. Keep in lockstep with the CLI release tag.
-IMAGE_VERSION="0.0.8"
+IMAGE_VERSION="0.0.9"
 
 # ---------------------------------------------------------------------------
 # claude-docker — Run Claude Code autonomously in Docker with worktree isolation
@@ -30,6 +30,9 @@ RUN OPTIONS:
   --from <branch>              Base branch for the worktree
   --image <stack>              Image stack: java | node | python
   --branch-prefix <prefix>    Branch prefix (default: ai-tasks/)
+  --workspaces-dir <path>      Directory to hold worktrees (default:
+                               \$REPO_ROOT/.claude-workspaces).
+                               Supports \$REPO_ROOT and ~ expansion.
   --prompt-file <path>         Read prompt from file
   --config <path>              Config file path (default: .claude-docker.yml)
   --claude-flags "<flags>"    Extra flags passed to the claude CLI.
@@ -131,6 +134,23 @@ config_get_env() {
     fi
 }
 
+# Resolve the workspaces directory: CLI flag > config > default. Expands
+# $REPO_ROOT / ${REPO_ROOT} and a leading ~ so users can put worktrees outside
+# the repo (e.g. for IDEs that dislike nested worktrees).
+# Usage: resolve_workspaces_dir <cli-arg>
+resolve_workspaces_dir() {
+    local cli_arg="$1"
+    local raw="${cli_arg:-$(config_get '.workspaces-dir' "$REPO_ROOT/.claude-workspaces")}"
+    raw="${raw//\$\{REPO_ROOT\}/$REPO_ROOT}"
+    raw="${raw//\$REPO_ROOT/$REPO_ROOT}"
+    if [[ "$raw" == "~"* ]]; then
+        raw="${HOME}${raw:1}"
+    fi
+    # Normalize away any trailing slash for consistent path joining.
+    raw="${raw%/}"
+    echo "$raw"
+}
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -148,6 +168,7 @@ cmd_run() {
     local base_branch=""
     local image_stack=""
     local branch_prefix=""
+    local workspaces_dir_arg=""
     local prompt_file=""
     local no_hooks=false
     local no_update=false
@@ -163,6 +184,7 @@ cmd_run() {
             --from)         base_branch="$2"; shift 2 ;;
             --image)        image_stack="$2"; shift 2 ;;
             --branch-prefix) branch_prefix="$2"; shift 2 ;;
+            --workspaces-dir) workspaces_dir_arg="$2"; shift 2 ;;
             --prompt-file)  prompt_file="$2"; shift 2 ;;
             --config)       config_path="$2"; shift 2 ;;
             --claude-flags) claude_flags="$2"; claude_flags_set=true; shift 2 ;;
@@ -232,7 +254,8 @@ cmd_run() {
     fi
 
     local branch="${prefix}${task_name}"
-    local workspaces_dir="$REPO_ROOT/.claude-workspaces"
+    local workspaces_dir
+    workspaces_dir=$(resolve_workspaces_dir "$workspaces_dir_arg")
     local worktree_dir="$workspaces_dir/$task_name"
     local image
     image="${IMAGE_REGISTRY}/claude-docker-${img}:${IMAGE_VERSION}"
@@ -245,6 +268,7 @@ cmd_run() {
         echo "Task name:        $task_name"
         echo "Branch:           $branch"
         echo "Base branch:      $base"
+        echo "Workspaces dir:   $workspaces_dir"
         echo "Worktree:         $worktree_dir"
         echo "Subdirectory:     ${subdir:-<root>}"
         echo "Hooks:            $([ "$no_hooks" = true ] && echo 'disabled' || echo 'enabled')"
@@ -358,8 +382,10 @@ cmd_cleanup() {
     CONFIG_FILE="$REPO_ROOT/.claude-docker.yml"
     local prefix
     prefix=$(config_get '.branch-prefix' 'ai-tasks/')
+    local workspaces_dir
+    workspaces_dir=$(resolve_workspaces_dir "")
 
-    local worktree_dir="$REPO_ROOT/.claude-workspaces/$task_name"
+    local worktree_dir="$workspaces_dir/$task_name"
     local branch="${prefix}${task_name}"
 
     if [ ! -d "$worktree_dir" ]; then
