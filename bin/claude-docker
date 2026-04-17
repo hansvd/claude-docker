@@ -1,14 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="1.0.0"
 IMAGE_REGISTRY="ghcr.io/hansvd"
 
 # Version for all claude-docker images. Bumping this and pushing to main
 # triggers the image-build workflow (.github/workflows/build-images.yml),
 # which rebuilds all four images, cuts the v<version> git tag, and creates
 # a GitHub Release. Keep in lockstep with the CLI release tag.
-IMAGE_VERSION="0.0.7"
+IMAGE_VERSION="0.0.8"
 
 # ---------------------------------------------------------------------------
 # claude-docker — Run Claude Code autonomously in Docker with worktree isolation
@@ -16,7 +15,7 @@ IMAGE_VERSION="0.0.7"
 
 usage() {
     cat <<EOF
-claude-docker $VERSION — Run Claude Code in Docker with git worktree isolation
+claude-docker $IMAGE_VERSION — Run Claude Code in Docker with git worktree isolation
 
 USAGE:
   claude-docker run <task-name> ["prompt"]
@@ -417,7 +416,7 @@ case "$1" in
     list)       cmd_list ;;
     login)      cmd_login ;;
     help|-h|--help) usage ;;
-    --version)  echo "claude-docker $VERSION"; exit 0 ;;
+    --version)  echo "claude-docker $IMAGE_VERSION"; exit 0 ;;
     *)
         # Allow shorthand: treat unrecognized arg as task name for `run`.
         # Task names must start with an alphanumeric/underscore so bare flags
