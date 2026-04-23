@@ -7,7 +7,7 @@ IMAGE_REGISTRY="ghcr.io/hansvd"
 # triggers the image-build workflow (.github/workflows/build-images.yml),
 # which rebuilds all four images, cuts the v<version> git tag, and creates
 # a GitHub Release. Keep in lockstep with the CLI release tag.
-IMAGE_VERSION="0.0.9"
+IMAGE_VERSION="0.0.10"
 
 # ---------------------------------------------------------------------------
 # claude-docker — Run Claude Code autonomously in Docker with worktree isolation
@@ -18,7 +18,7 @@ usage() {
 claude-docker $IMAGE_VERSION — Run Claude Code in Docker with git worktree isolation
 
 USAGE:
-  claude-docker run <task-name> ["prompt"]
+  claude-docker [run] <task-name> ["prompt"]
   claude-docker cleanup <task-name> [--delete-branch]
   claude-docker list
   claude-docker login
@@ -44,6 +44,7 @@ RUN OPTIONS:
 
 EXAMPLES:
   claude-docker run fix-login "Fix the login timeout"
+  claude-docker fix-login "Fix the login timeout"     # 'run' is optional
   claude-docker run -d sensus-app fix-ui "Fix dashboard layout"
   claude-docker run --from feature/auth fix-auth
   claude-docker cleanup fix-login
@@ -260,6 +261,13 @@ cmd_run() {
     local image
     image="${IMAGE_REGISTRY}/claude-docker-${img}:${IMAGE_VERSION}"
 
+    # Prefix the prompt with the task name so it surfaces in Claude Code's
+    # /resume summary. Skip when no prompt is given — in interactive mode the
+    # user's first typed message becomes the summary.
+    if [ -n "$prompt" ]; then
+        prompt="[$task_name] $prompt"
+    fi
+
     if [ "$dry_run" = true ]; then
         echo "=== Dry Run ==="
         echo "Repository:       $REPO_ROOT"
@@ -330,6 +338,7 @@ cmd_run() {
         -e "HOME=/home/agent"
         -e "WORKTREE_PATH=$worktree_dir"
         -e "CLAUDE_DOCKER_BRANCH_PREFIX=$prefix"
+        -e "CLAUDE_DOCKER_TASK_NAME=$task_name"
         --user "${UID:-1000}:${GID:-$(id -g)}"
         --entrypoint "/opt/claude-docker/entrypoint.sh"
     )
@@ -437,24 +446,13 @@ if [ $# -lt 1 ]; then
 fi
 
 case "$1" in
-    run)        shift; cmd_run "$@" ;;
-    cleanup)    shift; cmd_cleanup "$@" ;;
-    list)       cmd_list ;;
-    login)      cmd_login ;;
+    run)            shift; cmd_run "$@" ;;
+    cleanup)        shift; cmd_cleanup "$@" ;;
+    list)           cmd_list ;;
+    login)          cmd_login ;;
     help|-h|--help) usage ;;
-    --version)  echo "claude-docker $IMAGE_VERSION"; exit 0 ;;
-    *)
-        # Allow shorthand: treat unrecognized arg as task name for `run`.
-        # Task names must start with an alphanumeric/underscore so bare flags
-        # like `--dry-run` are not silently accepted as task names.
-        if [[ "$1" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_-]*$ ]]; then
-            cmd_run "$@"
-        else
-            echo "Unknown command or misplaced flag: $1"
-            echo "Flags like --dry-run must come after 'run'. Example:"
-            echo "  claude-docker run --dry-run <task>"
-            echo "Run 'claude-docker help' for usage."
-            exit 1
-        fi
-        ;;
+    --version)      echo "claude-docker $IMAGE_VERSION"; exit 0 ;;
+    # `run` is the default command; anything else (task name or flags) is
+    # dispatched to cmd_run, which validates the task name and flags itself.
+    *)              cmd_run "$@" ;;
 esac

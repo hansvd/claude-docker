@@ -10,6 +10,7 @@ set -e
 #
 # Environment variables (set by the CLI):
 #   WORKTREE_PATH                    - path to the git worktree
+#   CLAUDE_DOCKER_TASK_NAME          - task name (for display / session context)
 #   CLAUDE_DOCKER_BRANCH_PREFIX      - branch prefix to enforce (default: ai-tasks/)
 #   CLAUDE_DOCKER_PROTECTED_FILES    - comma-separated glob patterns to block
 #   CLAUDE_DOCKER_PROTECTED_PATHS    - comma-separated directory prefixes to block
