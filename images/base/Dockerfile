@@ -15,7 +15,9 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
     && rm -rf /root/.local/bin/claude
 
 # Install Playwright browsers and OS dependencies
-RUN apt-get clean && npx playwright install --with-deps chromium
+RUN apt-get clean && npx playwright install --with-deps chromium && \
+  ln -sf "$(ls -d /home/agent/.cache/ms-playwright/chromium-[0-9]*/chrome-linux/chrome | sort -V | tail -1)" /usr/local/bin/chromium
+ENV CHROME_BIN=/usr/local/bin/chromium
 
 # Create agent user with UID 1000
 # Noble images ship with an 'ubuntu' user at UID 1000 - remove it first
