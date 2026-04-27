@@ -14,9 +14,15 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
     && cp /root/.local/bin/claude /usr/local/bin/claude \
     && rm -rf /root/.local/bin/claude
 
-# Install Playwright browsers and OS dependencies
+# Install Playwright browsers and OS dependencies.
+# Use a fixed system-wide cache path: $HOME differs between build (root) and
+# runtime (host UID, not yet created at this point), and /home/agent does not
+# exist until the useradd step below. Setting PLAYWRIGHT_BROWSERS_PATH as ENV
+# also ensures @playwright/mcp finds the same browsers at runtime without
+# re-downloading.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN apt-get clean && npx playwright install --with-deps chromium && \
-  ln -sf "$(ls -d /home/agent/.cache/ms-playwright/chromium-[0-9]*/chrome-linux/chrome | sort -V | tail -1)" /usr/local/bin/chromium
+  ln -sf "$(ls -d /ms-playwright/chromium-[0-9]*/chrome-linux/chrome | sort -V | tail -1)" /usr/local/bin/chromium
 ENV CHROME_BIN=/usr/local/bin/chromium
 
 # Create agent user with UID 1000

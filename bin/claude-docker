@@ -7,7 +7,7 @@ IMAGE_REGISTRY="ghcr.io/hansvd"
 # triggers the image-build workflow (.github/workflows/build-images.yml),
 # which rebuilds all four images, cuts the v<version> git tag, and creates
 # a GitHub Release. Keep in lockstep with the CLI release tag.
-IMAGE_VERSION="0.0.13"
+IMAGE_VERSION="0.0.14"
 
 # ---------------------------------------------------------------------------
 # claude-docker — Run Claude Code autonomously in Docker with worktree isolation
