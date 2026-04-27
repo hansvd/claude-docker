@@ -29,6 +29,43 @@ Unified release: CLI and images share a single version.
 - `workflow_dispatch` is an escape hatch for re-running a build at an existing version without bumping.
 - After the release job, an `update-tap` job downloads the source tarball, computes its `sha256`, rewrites `url` + `sha256` in `Formula/claude-docker.rb`, commits the result back to `main` here (with `[skip ci]`) and mirrors the same file to the `hansvd/homebrew-claude-docker` tap. This needs a fine-grained PAT scoped to the tap repo (Contents: Read & Write), stored as the `HOMEBREW_TAP_TOKEN` secret on this repo.
 
+### Rotating `HOMEBREW_TAP_TOKEN` (when the PAT expires)
+
+Symptom: a release builds fine but the `update-tap` job fails at the
+"Mirror formula to homebrew tap" step with a `403` / `Bad credentials`
+error from `git push`. GitHub also emails the token owner ~7 days before
+expiry.
+
+To rotate:
+
+1. **Generate a replacement PAT.** Open
+   <https://github.com/settings/personal-access-tokens> →
+   **Generate new token (fine-grained)**:
+   - Resource owner: `hansvd`
+   - Repository access: **Only `hansvd/homebrew-claude-docker`**
+   - Repository permissions → **Contents: Read and write**
+   - Pick a new expiration date.
+   Copy the token value — it's shown only once.
+2. **Update the secret** on this repo at
+   <https://github.com/hansvd/claude-docker/settings/secrets/actions>:
+   click **`HOMEBREW_TAP_TOKEN`** → **Update secret** → paste the new
+   value → **Update secret**. (Do not delete and recreate; updating in
+   place avoids a window where the secret is missing.)
+3. **Re-run the failed release** if a release was blocked by the expired
+   token: open the failed Actions run → **Re-run failed jobs**. Only
+   `update-tap` will re-execute; the build/release outputs are still
+   valid. If you'd rather drive it manually, re-run the workflow via
+   `workflow_dispatch` with the same `version` and
+   `create_release=false` — but that path skips `update-tap` (gated on
+   `should_release`), so prefer **Re-run failed jobs**.
+4. **Revoke the old PAT** once the new one is confirmed working, at
+   <https://github.com/settings/personal-access-tokens> → old token →
+   **Revoke**.
+
+Tip: set a calendar reminder a week before the new token's expiration so
+rotation happens before, not after, a blocked release. GitHub does not
+currently support fine-grained PATs without an expiration.
+
 ## Architecture
 
 Flow: host CLI → docker run → in-container entrypoint → Claude Code with dynamically-registered guard hooks.
