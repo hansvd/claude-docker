@@ -27,7 +27,7 @@ Unified release: CLI and images share a single version.
 - Bump `IMAGE_VERSION` at the top of `bin/claude-docker` and push to `main`.
 - `.github/workflows/build-images.yml` detects the change, builds all four images (base first, then java/node/python in parallel, all pinned to `BASE_TAG=<version>`, multi-arch amd64+arm64), then creates the `v<version>` git tag and GitHub Release.
 - `workflow_dispatch` is an escape hatch for re-running a build at an existing version without bumping.
-- The Homebrew tap (`hansvd/homebrew-claude-docker`) is still updated by hand after each release — copy `Formula/claude-docker.rb`, bump `url` and `sha256`.
+- After the release job, an `update-tap` job downloads the source tarball, computes its `sha256`, rewrites `url` + `sha256` in `Formula/claude-docker.rb`, commits the result back to `main` here (with `[skip ci]`) and mirrors the same file to the `hansvd/homebrew-claude-docker` tap. This needs a fine-grained PAT scoped to the tap repo (Contents: Read & Write), stored as the `HOMEBREW_TAP_TOKEN` secret on this repo.
 
 ## Architecture
 

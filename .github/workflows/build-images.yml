@@ -152,3 +152,70 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-tap:
+    needs: [detect-version, release]
+    if: needs.detect-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute tarball sha256
+        id: sha
+        run: |
+          set -euo pipefail
+          ver='${{ needs.detect-version.outputs.version }}'
+          url="https://github.com/${{ github.repository }}/archive/refs/tags/v${ver}.tar.gz"
+          for i in 1 2 3 4 5; do
+            if curl -fsSL -o release.tar.gz "$url"; then break; fi
+            sleep 5
+          done
+          sha=$(sha256sum release.tar.gz | awk '{print $1}')
+          echo "sha256=${sha}" >> "$GITHUB_OUTPUT"
+          echo "url=${url}"    >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite Formula/claude-docker.rb
+        run: |
+          set -euo pipefail
+          python3 - '${{ steps.sha.outputs.url }}' '${{ steps.sha.outputs.sha256 }}' <<'PY'
+          import re, sys, pathlib
+          url, sha = sys.argv[1], sys.argv[2]
+          p = pathlib.Path("Formula/claude-docker.rb")
+          s = p.read_text()
+          s = re.sub(r'^(\s*url\s+).*$',    rf'\1"{url}"', s, count=1, flags=re.M)
+          s = re.sub(r'^(\s*sha256\s+).*$', rf'\1"{sha}"', s, count=1, flags=re.M)
+          p.write_text(s)
+          PY
+
+      - name: Commit updated formula to this repo
+        run: |
+          set -euo pipefail
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet Formula/claude-docker.rb; then
+            echo "Formula already up to date."
+          else
+            git add Formula/claude-docker.rb
+            git commit -m "Update Formula to v${{ needs.detect-version.outputs.version }} [skip ci]"
+            git push
+          fi
+
+      - name: Mirror formula to homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/hansvd/homebrew-claude-docker.git" tap
+          cp Formula/claude-docker.rb tap/Formula/claude-docker.rb
+          cd tap
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet; then
+            echo "Tap formula already up to date."
+          else
+            git add Formula/claude-docker.rb
+            git commit -m "claude-docker v${{ needs.detect-version.outputs.version }}"
+            git push origin HEAD:main
+          fi
