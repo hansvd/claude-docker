@@ -16,6 +16,12 @@ A bash CLI (`bin/claude-docker`) that launches Claude Code inside Docker contain
 ./bin/claude-docker login        # one-time Claude auth (writes to ~/.agent-home)
 ./bin/claude-docker --dry-run run <task>   # inspect the docker invocation without executing
 
+# Two-step workflow: prepare worktree, open IDE on it, then run Claude from the
+# IDE's terminal so diffs/commits/tests share one window with Claude's prompts.
+./bin/claude-docker prepare <task>                    # creates worktree, prints path on stdout
+idea "$(./bin/claude-docker prepare <task>)"          # idempotent — safe to chain
+./bin/claude-docker run <task>                        # from the worktree IDE's terminal
+
 # Build images locally for testing
 docker build -t claude-docker-base:test images/base
 docker build -t claude-docker-node:test --build-arg BASE_TAG=test images/node

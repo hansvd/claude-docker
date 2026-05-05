@@ -7,7 +7,7 @@ IMAGE_REGISTRY="ghcr.io/hansvd"
 # triggers the image-build workflow (.github/workflows/build-images.yml),
 # which rebuilds all four images, cuts the v<version> git tag, and creates
 # a GitHub Release. Keep in lockstep with the CLI release tag.
-IMAGE_VERSION="0.0.16"
+IMAGE_VERSION="0.0.17"
 
 # ---------------------------------------------------------------------------
 # claude-docker — Run Claude Code autonomously in Docker with worktree isolation
@@ -19,6 +19,7 @@ claude-docker $IMAGE_VERSION — Run Claude Code in Docker with git worktree iso
 
 USAGE:
   claude-docker [run] <task-name> ["prompt"]
+  claude-docker prepare <task-name>
   claude-docker cleanup <task-name> [--delete-branch]
   claude-docker list
   claude-docker login
@@ -45,11 +46,29 @@ RUN OPTIONS:
   --no-update                  Skip updating Claude before start
   --dry-run                    Show what would happen without executing
 
+PREPARE OPTIONS:
+  Creates the worktree without launching the container, then prints its
+  absolute path on stdout. Useful for opening the worktree in an IDE before
+  starting Claude:
+
+      idea "\$(claude-docker prepare my-task)"
+
+  Then run \`claude-docker run my-task\` from a terminal in that IDE — the
+  worktree is reused. Supported flags:
+
+  --from <branch>              Base branch for the worktree
+  --branch-prefix <prefix>     Branch prefix (default: ai-tasks/)
+  --workspaces-dir <path>      Directory to hold worktrees
+  --config <path>              Config file path (default: .claude-docker.yml)
+  --dry-run                    Print resolved settings without creating
+
 EXAMPLES:
   claude-docker run fix-login "Fix the login timeout"
   claude-docker fix-login "Fix the login timeout"     # 'run' is optional
   claude-docker run -d sensus-app fix-ui "Fix dashboard layout"
   claude-docker run --from feature/auth fix-auth
+  claude-docker prepare fix-login                     # then open in IDE
+  idea "\$(claude-docker prepare fix-login)"         # one-liner
   claude-docker cleanup fix-login
   claude-docker list
 EOF
@@ -164,6 +183,31 @@ validate_task_name() {
     if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         echo "Error: Task name must contain only letters, numbers, hyphens, and underscores."
         exit 1
+    fi
+}
+
+# Ensure a worktree exists at $1 on $3, branched from $4 if it doesn't exist
+# yet. Idempotent: prints "Using existing worktree" if already present. All
+# output goes to stderr so callers can capture the path on stdout.
+ensure_worktree() {
+    local worktree_dir="$1"
+    local workspaces_dir="$2"
+    local branch="$3"
+    local base="$4"
+
+    git worktree prune
+    if [ ! -d "$worktree_dir" ]; then
+        mkdir -p "$workspaces_dir"
+        echo "Creating worktree at $worktree_dir on branch $branch (base: $base)..." >&2
+        git fetch origin >&2
+        if git show-ref --verify --quiet "refs/heads/$branch"; then
+            git worktree add "$worktree_dir" "$branch" >&2
+        else
+            git worktree add -b "$branch" "$worktree_dir" "$base" >&2
+        fi
+        echo "Worktree ready." >&2
+    else
+        echo "Using existing worktree at $worktree_dir" >&2
     fi
 }
 
@@ -301,24 +345,7 @@ cmd_run() {
         return 0
     fi
 
-    # Clean stale worktree entries
-    git worktree prune
-
-    # Create worktree if it doesn't exist
-    if [ ! -d "$worktree_dir" ]; then
-        mkdir -p "$workspaces_dir"
-        echo "Creating worktree at $worktree_dir on branch $branch (base: $base)..."
-        git fetch origin
-
-        if git show-ref --verify --quiet "refs/heads/$branch"; then
-            git worktree add "$worktree_dir" "$branch"
-        else
-            git worktree add -b "$branch" "$worktree_dir" "$base"
-        fi
-        echo "Worktree ready."
-    else
-        echo "Using existing worktree at $worktree_dir"
-    fi
+    ensure_worktree "$worktree_dir" "$workspaces_dir" "$branch" "$base"
 
     # Validate setup script (must exist in the worktree)
     if [ -n "$setup_script" ]; then
@@ -405,24 +432,96 @@ cmd_run() {
     docker "${docker_args[@]}"
 }
 
+cmd_prepare() {
+    local base_branch=""
+    local branch_prefix=""
+    local workspaces_dir_arg=""
+    local config_path=""
+    local dry_run=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from)           base_branch="$2"; shift 2 ;;
+            --branch-prefix)  branch_prefix="$2"; shift 2 ;;
+            --workspaces-dir) workspaces_dir_arg="$2"; shift 2 ;;
+            --config)         config_path="$2"; shift 2 ;;
+            --dry-run)        dry_run=true; shift ;;
+            -*)
+                echo "Error: unknown or unsupported option for 'prepare': $1" >&2
+                echo "       'prepare' only accepts --from, --branch-prefix, --workspaces-dir, --config, --dry-run." >&2
+                exit 1
+                ;;
+            *)                break ;;
+        esac
+    done
+
+    if [ $# -lt 1 ]; then
+        echo "Error: task name required." >&2
+        echo "Usage: claude-docker prepare <task-name>" >&2
+        exit 1
+    fi
+
+    local task_name="$1"
+    validate_task_name "$task_name"
+
+    find_repo_root
+    CONFIG_FILE="${config_path:-$REPO_ROOT/.claude-docker.yml}"
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Note: no config file at $CONFIG_FILE — using built-in defaults." >&2
+    fi
+
+    local base="${base_branch:-$(config_get '.base-branch' 'origin/main')}"
+    local prefix="${branch_prefix:-$(config_get '.branch-prefix' 'ai-tasks/')}"
+    local branch="${prefix}${task_name}"
+    local workspaces_dir
+    workspaces_dir=$(resolve_workspaces_dir "$workspaces_dir_arg")
+    local worktree_dir="$workspaces_dir/$task_name"
+
+    if [ "$dry_run" = true ]; then
+        {
+            echo "=== Dry Run (prepare) ==="
+            echo "Repository:     $REPO_ROOT"
+            echo "Config file:    $CONFIG_FILE"
+            echo "Task name:      $task_name"
+            echo "Branch:         $branch"
+            echo "Base branch:    $base"
+            echo "Workspaces dir: $workspaces_dir"
+            echo "Worktree:       $worktree_dir"
+        } >&2
+        echo "$worktree_dir"
+        return 0
+    fi
+
+    ensure_worktree "$worktree_dir" "$workspaces_dir" "$branch" "$base"
+    echo "$worktree_dir"
+}
+
 cmd_cleanup() {
     local delete_branch=false
+    local task_name=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --delete-branch) delete_branch=true; shift ;;
             -*)              echo "Unknown option: $1"; exit 1 ;;
-            *)               break ;;
+            *)
+                if [ -z "$task_name" ]; then
+                    task_name="$1"; shift
+                else
+                    echo "Error: unexpected argument: $1"
+                    exit 1
+                fi
+                ;;
         esac
     done
 
-    if [ $# -lt 1 ]; then
+    if [ -z "$task_name" ]; then
         echo "Error: task name required."
         echo "Usage: claude-docker cleanup <task-name> [--delete-branch]"
         exit 1
     fi
 
-    local task_name="$1"
     validate_task_name "$task_name"
 
     find_repo_root
@@ -485,6 +584,7 @@ fi
 
 case "$1" in
     run)            shift; cmd_run "$@" ;;
+    prepare)        shift; cmd_prepare "$@" ;;
     cleanup)        shift; cmd_cleanup "$@" ;;
     list)           cmd_list ;;
     login)          cmd_login ;;
