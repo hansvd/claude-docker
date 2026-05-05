@@ -69,6 +69,12 @@ env:
 # Update Claude to the latest release on every container start (default: true).
 # Set to false for offline use or to pin to the version baked into the image.
 auto-update-claude: true
+
+# Bootstrap script run inside the container before Claude launches.
+# Path is relative to the worktree root. Cwd is the worktree root.
+# Use it for project setup like `npm install` in subdirs, lockfile workarounds,
+# warming caches, etc. A non-zero exit aborts the container.
+setup-script: scripts/claude-bootstrap.sh
 ```
 
 All fields are optional. Without a config file, sensible defaults apply:
@@ -83,6 +89,7 @@ All fields are optional. Without a config file, sensible defaults apply:
 | `guards.protected-paths` | _(none)_ |
 | `claude-flags` | _(none)_ |
 | `auto-update-claude` | `true` |
+| `setup-script` | _(none)_ |
 
 ## Commands
 
@@ -99,6 +106,8 @@ Creates a git worktree and launches a Docker container with Claude Code.
 | `--workspaces-dir <path>` | Directory for worktrees (default `$REPO_ROOT/.claude-workspaces`). Supports `$REPO_ROOT` and `~` expansion             |
 | `--prompt-file <path>` | Read prompt from a file                                                                                               |
 | `--claude-flags "<flags>"` | Extra flags passed to `claude`. `$task_name` / `${task_name}` are interpolated (e.g. `"--remote-control $task_name"`) |
+| `--setup-script <path>` | Bootstrap script (relative to worktree) run inside the container before Claude launches                               |
+| `--no-setup` | Skip the configured setup script                                                                                      |
 | `--no-hooks` | Disable all guard hooks                                                                                               |
 | `--no-update` | Skip updating Claude before start                                                                                     |
 | `--dry-run` | Show what would happen                                                                                                |

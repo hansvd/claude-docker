@@ -7,7 +7,7 @@ IMAGE_REGISTRY="ghcr.io/hansvd"
 # triggers the image-build workflow (.github/workflows/build-images.yml),
 # which rebuilds all four images, cuts the v<version> git tag, and creates
 # a GitHub Release. Keep in lockstep with the CLI release tag.
-IMAGE_VERSION="0.0.15"
+IMAGE_VERSION="0.0.16"
 
 # ---------------------------------------------------------------------------
 # claude-docker — Run Claude Code autonomously in Docker with worktree isolation
@@ -38,6 +38,9 @@ RUN OPTIONS:
   --claude-flags "<flags>"    Extra flags passed to the claude CLI.
                               Supports \$task_name interpolation
                               (e.g. "--remote-control=\$task_name").
+  --setup-script <path>        Bootstrap script (relative to worktree) to run
+                               before Claude launches
+  --no-setup                   Skip the configured setup script
   --no-hooks                   Disable all guard hooks
   --no-update                  Skip updating Claude before start
   --dry-run                    Show what would happen without executing
@@ -177,6 +180,8 @@ cmd_run() {
     local config_path=""
     local claude_flags=""
     local claude_flags_set=false
+    local setup_script_arg=""
+    local no_setup=false
 
     # Parse run-specific flags
     while [[ $# -gt 0 ]]; do
@@ -189,6 +194,8 @@ cmd_run() {
             --prompt-file)  prompt_file="$2"; shift 2 ;;
             --config)       config_path="$2"; shift 2 ;;
             --claude-flags) claude_flags="$2"; claude_flags_set=true; shift 2 ;;
+            --setup-script) setup_script_arg="$2"; shift 2 ;;
+            --no-setup)     no_setup=true; shift ;;
             --no-hooks)     no_hooks=true; shift ;;
             --no-update)    no_update=true; shift ;;
             --dry-run)      dry_run=true; shift ;;
@@ -239,6 +246,11 @@ cmd_run() {
         auto_update=$(config_get_bool '.auto-update-claude' 'true')
     fi
 
+    local setup_script=""
+    if [ "$no_setup" = false ]; then
+        setup_script="${setup_script_arg:-$(config_get '.setup-script' '')}"
+    fi
+
     # Interpolate template variables into claude-flags. Supported: $task_name, ${task_name}
     claude_flags="${claude_flags//\$\{task_name\}/$task_name}"
     claude_flags="${claude_flags//\$task_name/$task_name}"
@@ -283,6 +295,7 @@ cmd_run() {
         echo "Auto-update:      $auto_update"
         echo "Protected files:  ${protected_files:-<none>}"
         echo "Protected paths:  ${protected_paths:-<none>}"
+        echo "Setup script:     ${setup_script:-<none>}"
         echo "Claude flags:     ${claude_flags:-<none>}"
         echo "Prompt:           ${prompt:-<interactive>}"
         return 0
@@ -305,6 +318,20 @@ cmd_run() {
         echo "Worktree ready."
     else
         echo "Using existing worktree at $worktree_dir"
+    fi
+
+    # Validate setup script (must exist in the worktree)
+    if [ -n "$setup_script" ]; then
+        local setup_check
+        case "$setup_script" in
+            /*) setup_check="$setup_script" ;;
+            *)  setup_check="$worktree_dir/$setup_script" ;;
+        esac
+        if [ ! -f "$setup_check" ]; then
+            echo "Error: setup script not found: $setup_check"
+            echo "Hint: path is resolved relative to the worktree root."
+            exit 1
+        fi
     fi
 
     # Validate subdir
@@ -354,6 +381,17 @@ cmd_run() {
     # Auto-update is on by default in the entrypoint; only pass the env var to disable it
     if [ "$auto_update" = "false" ]; then
         docker_args+=(-e "CLAUDE_DOCKER_AUTO_UPDATE=0")
+    fi
+
+    # Setup script path (resolved to an absolute path inside the container; the
+    # worktree is bind-mounted at the same path so host == container path)
+    if [ -n "$setup_script" ]; then
+        local setup_in_container
+        case "$setup_script" in
+            /*) setup_in_container="$setup_script" ;;
+            *)  setup_in_container="$worktree_dir/$setup_script" ;;
+        esac
+        docker_args+=(-e "CLAUDE_DOCKER_SETUP_SCRIPT=$setup_in_container")
     fi
 
     # Add extra env vars from config

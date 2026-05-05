@@ -16,6 +16,7 @@ set -e
 #   CLAUDE_DOCKER_PROTECTED_PATHS    - comma-separated directory prefixes to block
 #   CLAUDE_DOCKER_NO_HOOKS           - set to 1 to skip hook generation
 #   CLAUDE_DOCKER_AUTO_UPDATE        - set to 0 to skip Claude auto-update (default: on)
+#   CLAUDE_DOCKER_SETUP_SCRIPT       - absolute path inside container; runs before Claude
 # ---------------------------------------------------------------------------
 
 HOOKS_DIR="$HOME/.claude-docker-hooks"
@@ -44,6 +45,23 @@ if [ "${CLAUDE_DOCKER_AUTO_UPDATE:-1}" = "1" ]; then
     fi
 fi
 export PATH="$HOME/.local/bin:$PATH"
+
+# --- Run per-task setup script (after Claude update, before hook generation) ---
+if [ -n "${CLAUDE_DOCKER_SETUP_SCRIPT:-}" ]; then
+    if [ ! -f "$CLAUDE_DOCKER_SETUP_SCRIPT" ]; then
+        echo "claude-docker: setup script not found in container: $CLAUDE_DOCKER_SETUP_SCRIPT" >&2
+        exit 1
+    fi
+    echo "claude-docker: running setup script $CLAUDE_DOCKER_SETUP_SCRIPT"
+    pushd "${WORKTREE_PATH:-$(pwd)}" >/dev/null
+    if ! bash "$CLAUDE_DOCKER_SETUP_SCRIPT"; then
+        rc=$?
+        echo "claude-docker: setup script failed (exit $rc); aborting before Claude launch" >&2
+        exit $rc
+    fi
+    popd >/dev/null
+    echo "claude-docker: setup script completed"
+fi
 
 # --- Skip hook generation if disabled ---
 if [ "${CLAUDE_DOCKER_NO_HOOKS:-}" = "1" ]; then
