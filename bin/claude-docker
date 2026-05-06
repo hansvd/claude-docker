@@ -7,7 +7,7 @@ IMAGE_REGISTRY="ghcr.io/hansvd"
 # triggers the image-build workflow (.github/workflows/build-images.yml),
 # which rebuilds all four images, cuts the v<version> git tag, and creates
 # a GitHub Release. Keep in lockstep with the CLI release tag.
-IMAGE_VERSION="0.0.17"
+IMAGE_VERSION="0.0.18"
 
 # ---------------------------------------------------------------------------
 # claude-docker — Run Claude Code autonomously in Docker with worktree isolation
@@ -44,6 +44,7 @@ RUN OPTIONS:
   --no-setup                   Skip the configured setup script
   --no-hooks                   Disable all guard hooks
   --no-update                  Skip updating Claude before start
+  --no-host-settings           Don't sync ~/.claude/settings.json plugins
   --dry-run                    Show what would happen without executing
 
 PREPARE OPTIONS:
@@ -226,6 +227,7 @@ cmd_run() {
     local claude_flags_set=false
     local setup_script_arg=""
     local no_setup=false
+    local no_host_settings=false
 
     # Parse run-specific flags
     while [[ $# -gt 0 ]]; do
@@ -242,6 +244,7 @@ cmd_run() {
             --no-setup)     no_setup=true; shift ;;
             --no-hooks)     no_hooks=true; shift ;;
             --no-update)    no_update=true; shift ;;
+            --no-host-settings) no_host_settings=true; shift ;;
             --dry-run)      dry_run=true; shift ;;
             -*)             echo "Unknown option: $1"; exit 1 ;;
             *)              break ;;
@@ -341,6 +344,7 @@ cmd_run() {
         echo "Protected paths:  ${protected_paths:-<none>}"
         echo "Setup script:     ${setup_script:-<none>}"
         echo "Claude flags:     ${claude_flags:-<none>}"
+        echo "Host settings:    $([ "$no_host_settings" = true ] && echo 'disabled' || ([ -f "${HOME}/.claude/settings.json" ] && echo 'sync from ~/.claude/settings.json' || echo '<not present>'))"
         echo "Prompt:           ${prompt:-<interactive>}"
         return 0
     fi
@@ -396,6 +400,13 @@ cmd_run() {
         --user "${UID:-1000}:${GID:-$(id -g)}"
         --entrypoint "/opt/claude-docker/entrypoint.sh"
     )
+
+    # Sync host ~/.claude/settings.json plugins into the container at startup.
+    # The entrypoint reads enabledPlugins from this file and runs `claude
+    # plugin install` for each. Mount is read-only; opt out with --no-host-settings.
+    if [ "$no_host_settings" != true ] && [ -f "${HOME}/.claude/settings.json" ]; then
+        docker_args+=(-v "${HOME}/.claude/settings.json:/opt/host-claude-settings.json:ro")
+    fi
 
     # Add guard env vars
     if [ "$no_hooks" = true ]; then

@@ -17,6 +17,12 @@ set -e
 #   CLAUDE_DOCKER_NO_HOOKS           - set to 1 to skip hook generation
 #   CLAUDE_DOCKER_AUTO_UPDATE        - set to 0 to skip Claude auto-update (default: on)
 #   CLAUDE_DOCKER_SETUP_SCRIPT       - absolute path inside container; runs before Claude
+#
+# Optional read-only mount:
+#   /opt/host-claude-settings.json   - host's ~/.claude/settings.json. When
+#                                      present, enabledPlugins is synced into
+#                                      ~/.claude/settings.json and missing
+#                                      plugins are installed.
 # ---------------------------------------------------------------------------
 
 HOOKS_DIR="$HOME/.claude-docker-hooks"
@@ -45,6 +51,62 @@ if [ "${CLAUDE_DOCKER_AUTO_UPDATE:-1}" = "1" ]; then
     fi
 fi
 export PATH="$HOME/.local/bin:$PATH"
+
+# --- Sync host ~/.claude/settings.json plugins (if mounted) ---
+# Mounted read-only at /opt/host-claude-settings.json by the CLI when the host
+# has a ~/.claude/settings.json. We install any missing plugins into
+# ~/.agent-home/.claude/plugins/ (idempotent — fast no-op for already-present
+# plugins) and merge enabledPlugins into the container settings file. Runs
+# before the later settings backup so the merged enabledPlugins survives the
+# EXIT-trap restore.
+HOST_SETTINGS=/opt/host-claude-settings.json
+if [ -f "$HOST_SETTINGS" ]; then
+    mkdir -p "$HOME/.claude"
+    [ -f "$CLAUDE_SETTINGS" ] || echo '{}' > "$CLAUDE_SETTINGS"
+
+    # Marketplace ID -> source mapping. Extend here if the user enables
+    # plugins from other marketplaces.
+    declare -A MARKETPLACE_SRC=(
+        [claude-plugins-official]=anthropics/claude-plugins-official
+    )
+
+    mapfile -t HOST_PLUGINS < <(jq -r '.enabledPlugins // {} | to_entries[] | select(.value==true) | .key' "$HOST_SETTINGS" 2>/dev/null || true)
+
+    if [ "${#HOST_PLUGINS[@]}" -gt 0 ]; then
+        echo "claude-docker: syncing ${#HOST_PLUGINS[@]} plugin(s) from host ~/.claude/settings.json"
+
+        declare -A SEEN_MP
+        for entry in "${HOST_PLUGINS[@]}"; do
+            mp="${entry##*@}"
+            [ -n "${SEEN_MP[$mp]:-}" ] && continue
+            SEEN_MP[$mp]=1
+            src="${MARKETPLACE_SRC[$mp]:-}"
+            if [ -z "$src" ]; then
+                echo "claude-docker: skipping plugins from unknown marketplace '$mp'" >&2
+                continue
+            fi
+            claude plugin marketplace add "$src" >/dev/null 2>&1 || true
+        done
+
+        for entry in "${HOST_PLUGINS[@]}"; do
+            mp="${entry##*@}"
+            [ -n "${MARKETPLACE_SRC[$mp]:-}" ] || continue
+            if ! claude plugin install "$entry" >/dev/null 2>&1; then
+                echo "claude-docker: plugin install failed for $entry" >&2
+            fi
+        done
+
+        # Merge enabledPlugins from host file into container settings file.
+        if jq --slurpfile host "$HOST_SETTINGS" \
+              '.enabledPlugins = ($host[0].enabledPlugins // {})' \
+              "$CLAUDE_SETTINGS" > "$CLAUDE_SETTINGS.tmp" 2>/dev/null; then
+            mv "$CLAUDE_SETTINGS.tmp" "$CLAUDE_SETTINGS"
+        else
+            rm -f "$CLAUDE_SETTINGS.tmp"
+            echo "claude-docker: failed to merge enabledPlugins into $CLAUDE_SETTINGS" >&2
+        fi
+    fi
+fi
 
 # --- Run per-task setup script (after Claude update, before hook generation) ---
 if [ -n "${CLAUDE_DOCKER_SETUP_SCRIPT:-}" ]; then

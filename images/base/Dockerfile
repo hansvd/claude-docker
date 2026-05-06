@@ -60,16 +60,13 @@ RUN userdel -r ubuntu 2>/dev/null || true && \
 # Set HOME so plugins install to the same location used at runtime
 ENV HOME=/home/agent
 
-# Add the official marketplace and install plugins
-RUN claude plugin marketplace add anthropics/claude-plugins-official && \
-    claude plugin install feature-dev@claude-plugins-official && \
-    claude plugin install superpowers@claude-plugins-official && \
-    claude plugin install commit-commands@claude-plugins-official && \
-    claude plugin install code-review@claude-plugins-official && \
-    claude plugin install frontend-design@claude-plugins-official && \
-    claude plugin install security-guidance@claude-plugins-official && \
-    claude plugin install context7@claude-plugins-official && \
-    claude mcp add playwright npx '@playwright/mcp@latest'
+# Plugins are no longer installed at image build time: the `~/.agent-home`
+# bind-mount in `bin/claude-docker` shadows `/home/agent/.claude/` at runtime,
+# so anything baked in here is unreachable. Plugins now sync into the
+# container at startup from the host's `~/.claude/settings.json`
+# (see `lib/entrypoint.sh`). The MCP add stays here for new agent-home
+# bootstraps.
+RUN claude mcp add playwright npx '@playwright/mcp@latest'
 
 # Install entrypoint script. Hooks are generated at runtime into
 # $HOME/.claude-docker-hooks so they are writable regardless of the UID
