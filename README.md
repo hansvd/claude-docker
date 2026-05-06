@@ -32,6 +32,25 @@ claude-docker list
 claude-docker cleanup fix-login
 ```
 
+## Working alongside an IDE
+
+If you want Claude's prompt to share a window with your IDE's diffs, tests, and
+git tools, prepare the worktree first, open it in the IDE, and launch Claude
+from the IDE's terminal:
+
+```bash
+# Create the worktree without launching the container.
+# Prints the worktree path on stdout; idempotent — safe to chain.
+idea "$(claude-docker prepare fix-login)"
+
+# Then, from a terminal inside that IDE window:
+claude-docker run fix-login
+```
+
+`prepare` accepts the same `--from`, `--branch-prefix`, `--workspaces-dir`,
+`--config`, and `--dry-run` flags as `run`. `run` invoked from inside an
+existing worktree reuses it — it won't create a nested one.
+
 ## Configuration
 
 Drop a `.claude-docker.yml` in your repo root:
@@ -111,6 +130,14 @@ Creates a git worktree and launches a Docker container with Claude Code.
 | `--no-hooks` | Disable all guard hooks                                                                                               |
 | `--no-update` | Skip updating Claude before start                                                                                     |
 | `--dry-run` | Show what would happen                                                                                                |
+
+### `claude-docker prepare <task-name>`
+
+Creates the worktree without launching the container, then prints its absolute
+path on stdout. Use it to open the worktree in an IDE before starting Claude
+(see [Working alongside an IDE](#working-alongside-an-ide)). Idempotent:
+re-running on an existing task just prints the path. Accepts `--from`,
+`--branch-prefix`, `--workspaces-dir`, `--config`, and `--dry-run`.
 
 ### `claude-docker cleanup <task-name>`
 

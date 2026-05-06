@@ -7,7 +7,7 @@ IMAGE_REGISTRY="ghcr.io/hansvd"
 # triggers the image-build workflow (.github/workflows/build-images.yml),
 # which rebuilds all four images, cuts the v<version> git tag, and creates
 # a GitHub Release. Keep in lockstep with the CLI release tag.
-IMAGE_VERSION="0.0.18"
+IMAGE_VERSION="0.0.19"
 
 # ---------------------------------------------------------------------------
 # claude-docker — Run Claude Code autonomously in Docker with worktree isolation
@@ -84,10 +84,17 @@ REPO_ROOT=""
 CONFIG_FILE=""
 
 find_repo_root() {
-    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    # Resolve to the main repo's working tree even when invoked from a linked
+    # worktree, so $REPO_ROOT/.git is always the shared .git directory the
+    # container needs to mount. --show-toplevel would give the worktree path,
+    # which is just a `gitdir:` pointer file and breaks the bind-mount.
+    local common_dir
+    if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
         echo "Error: not inside a git repository."
         exit 1
-    }
+    fi
+    [[ "$common_dir" != /* ]] && common_dir="$PWD/$common_dir"
+    REPO_ROOT=$(cd "$common_dir/.." && pwd)
 }
 
 # Read a value from the config file using yq. Falls back to a default.
