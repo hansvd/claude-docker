@@ -25,8 +25,14 @@ RUN apt-get update && \
     npx -y playwright@latest install-deps chromium && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Download the chromium browser binary into /ms-playwright.
-RUN npx -y playwright@latest install chromium
+# Download the chromium browser binary into /ms-playwright, then make
+# the tree writable by any runtime UID so Playwright can create its
+# per-instance cache subdirectory there. The container runs as the host's
+# UID (501 on macOS, 1000 on Linux), which won't always match the
+# build-time `agent` user, so chown alone isn't portable — `a+rwX` is.
+# Capital `X` only adds exec on directories, not on files.
+RUN npx -y playwright@latest install chromium && \
+    chmod -R a+rwX /ms-playwright
 
 # Expose the chromium binary at a stable path. Layout varies by Playwright
 # version: full chromium ships `chrome` under chromium-XXXX/chrome-linux*/, the
